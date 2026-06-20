@@ -209,7 +209,16 @@
   .day-participant:first-of-type { border-top:none; }
 
   .summary-section { margin-top:16px; padding-top:14px; border-top:1.5px solid var(--ink); }
-  .summary-title { font-family: var(--serif); font-size:15px; font-weight:700; margin-bottom:6px; }
+  /* the section heading IS a period dropdown — styled like the serif title,
+     defaults to "All time", switchable to a single year (filters the rows) */
+  .summary-title-select {
+    font-family: var(--serif); font-size:15px; font-weight:700; color: var(--ink);
+    background: transparent; border:none; border-radius:0; margin-bottom:6px;
+    padding:0 18px 0 0; cursor:pointer; -webkit-appearance:none; appearance:none; width:fit-content;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%232A2724' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right center;
+  }
+  .summary-title-select:focus { outline:none; }
   /* shared 4-column grid so per-person rows AND the total band line up like a
      table: [swatch] [name/period — flex] [No.X / "total"] [amount — right] */
   .summary-row {
@@ -315,7 +324,7 @@
     <div class="cal-grid" id="calDow"></div>
     <div class="cal-grid" id="calGrid" style="margin-top:4px;"></div>
     <div class="summary-section">
-      <div class="summary-title">Total Summary</div>
+      <select id="summaryPeriodSelect" class="summary-title-select" aria-label="Summary period"></select>
       <div id="totalSummary"></div>
     </div>
     <div class="year-total-band">
@@ -827,6 +836,11 @@
     $("#yearTotalValue").textContent = "$" + fmtMoney(periodTotal(selectedPeriod));
   });
 
+  $("#summaryPeriodSelect").addEventListener("change", function(){
+    summaryPeriod = this.value;
+    renderSummary();
+  });
+
   $("#prevMonth").addEventListener("click", function(){
     calMonth -= 1;
     if (calMonth < 0) { calMonth = 11; calYear -= 1; }
@@ -838,27 +852,41 @@
     renderCalendar();
   });
 
-  // ---------- monthly summary ----------
-  // all-time per-member totals across every recorded entry
-  function computeSummary(){
-    var totals = {}; // memberId -> { amount, sessions, paidCount }
+  // ---------- per-person summary ----------
+  // Total Summary has its OWN period (independent of the year-total band below).
+  // "all" => label reads "Total Summary"; a year => rows filtered to that year.
+  var summaryPeriod = "all";
+
+  // per-member totals across entries in the given period ("all" or a year string)
+  function computeSummary(period){
+    var totals = {}; // memberId -> { amount, sessions }
     state.entries.forEach(function(e){
+      if (period && period !== "all" && String(parseISO(e.date).getFullYear()) !== period) return;
       e.participants.forEach(function(p){
-        if (!totals[p.memberId]) totals[p.memberId] = { amount:0, sessions:0, paidCount:0 };
+        if (!totals[p.memberId]) totals[p.memberId] = { amount:0, sessions:0 };
         totals[p.memberId].amount += participantAmount(p);
         totals[p.memberId].sessions += 1;
-        if (p.paid) totals[p.memberId].paidCount += 1;
       });
     });
     return totals;
   }
 
-  // shows, per person:  swatch  Name · No.X (session count)  $total  [Paid]
+  // populates the title dropdown (All time + years with data) and the rows
   function renderSummary(){
-    var totals = computeSummary();
+    var sel = $("#summaryPeriodSelect");
+    var years = yearsWithData();
+    if (summaryPeriod !== "all" && years.indexOf(Number(summaryPeriod)) === -1) {
+      summaryPeriod = "all"; // selected year lost its data → fall back
+    }
+    var opts = ['<option value="all">Total Summary</option>']
+      .concat(years.map(function(y){ return '<option value="'+y+'">'+y+'</option>'; }));
+    sel.innerHTML = opts.join("");
+    sel.value = summaryPeriod;
+
+    var totals = computeSummary(summaryPeriod);
     var ids = Object.keys(totals);
     if (!ids.length) {
-      $("#totalSummary").innerHTML = '<div class="empty-hint" style="padding:16px 0;">No entries yet</div>';
+      $("#totalSummary").innerHTML = '<div class="empty-hint" style="padding:16px 0;">No entries'+(summaryPeriod==="all"?' yet':' for '+summaryPeriod)+'</div>';
       return;
     }
     ids.sort(function(a,b){ return totals[b].amount - totals[a].amount; });
@@ -894,6 +922,9 @@
     var perDate = {}; // iso -> amount
     var sessions = 0;
     state.entries.forEach(function(e){
+      // respect the Total Summary's selected period so the copied breakdown
+      // matches what's shown on screen
+      if (summaryPeriod !== "all" && String(parseISO(e.date).getFullYear()) !== summaryPeriod) return;
       e.participants.forEach(function(p){
         if (p.memberId !== memberId) return;
         if (!perDate[e.date]) perDate[e.date] = 0;
@@ -907,7 +938,8 @@
       total += perDate[iso];
       return iso + ": $" + fmtMoney(perDate[iso]);
     });
-    var header = name + " — " + sessions + " session" + (sessions===1?"":"s");
+    var periodTag = summaryPeriod === "all" ? "" : " (" + summaryPeriod + ")";
+    var header = name + periodTag + " — " + sessions + " session" + (sessions===1?"":"s");
     return [header].concat(lines)
       .concat(["——————————", "Total: $" + fmtMoney(total)])
       .join("\n");

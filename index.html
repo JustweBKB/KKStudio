@@ -99,16 +99,25 @@
 
   .add-row { display:flex; align-items:center; gap:8px; padding:14px 4px 4px; color: var(--accent); font-size:14px; cursor:pointer; font-weight:600; }
 
-  /* FAB */
-  .fab {
-    position: fixed; right:50%; transform: translateX(204px); bottom: calc(env(safe-area-inset-bottom) + 20px);
-    width:54px; height:54px; border-radius:50%; background: var(--accent); color:#fff;
-    display:flex; align-items:center; justify-content:center; box-shadow:0 6px 18px rgba(193,67,47,0.35);
-    border:none; cursor:pointer; z-index:30; font-size:24px;
+  /* year / all-time grand-total band — same 4-col grid as .summary-row so it
+     lines up as the table's "total" footer row */
+  .year-total-band {
+    display:grid; grid-template-columns: 16px 1fr 56px 84px; align-items:center;
+    column-gap:10px; margin-top:4px; padding:11px 2px 4px;
+    border-top:1.5px solid var(--ink);
   }
-  @media (max-width: 460px) {
-    .fab { right:20px; transform:none; }
+  .year-select {
+    grid-column: 1 / 3;            /* spans swatch + name columns */
+    font-family: var(--mono); font-size:13.5px; font-weight:700; color: var(--accent);
+    background: transparent; border:none; border-radius:0;
+    padding:2px 16px 2px 0; cursor:pointer; -webkit-appearance:none; appearance:none; width:fit-content;
+    /* sits in the background naturally — no box, just a small caret */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23C1432F' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right center;
   }
+  .year-select:focus { outline:none; }
+  .year-total-label { font-family: var(--mono); font-size:13.5px; color: var(--muted); text-align:right; }
+  .year-total-value { font-family: var(--mono); font-size:13.5px; font-weight:700; color: var(--accent); text-align:right; }
 
   /* modal sheet */
   .overlay { position:fixed; inset:0; background:rgba(42,39,36,0.4); z-index:50; display:none; }
@@ -200,12 +209,16 @@
   .day-participant:first-of-type { border-top:none; }
 
   .summary-section { margin-top:16px; padding-top:14px; border-top:1.5px solid var(--ink); }
-  .summary-title { font-family: var(--serif); font-size:15px; font-weight:700; margin-bottom:10px; }
-  .summary-row { display:flex; align-items:center; gap:8px; padding:8px 2px; border-bottom:1px dashed var(--rule); }
-  .summary-name { flex:1; font-size:13.5px; cursor:pointer; border-bottom:1px dotted var(--muted); width:fit-content; }
-  /* session count sits next to the total, same size & font, clearly readable */
-  .summary-sessions { font-family: var(--mono); font-size:13.5px; color: var(--ink); white-space:nowrap; }
-  .summary-amount { font-family: var(--mono); font-weight:700; font-size:13.5px; min-width:64px; text-align:right; }
+  .summary-title { font-family: var(--serif); font-size:15px; font-weight:700; margin-bottom:6px; }
+  /* shared 4-column grid so per-person rows AND the total band line up like a
+     table: [swatch] [name/period — flex] [No.X / "total"] [amount — right] */
+  .summary-row {
+    display:grid; grid-template-columns: 16px 1fr 56px 84px; align-items:center;
+    column-gap:10px; padding:9px 2px; border-bottom:1px dashed var(--rule);
+  }
+  .summary-name { font-size:13.5px; cursor:pointer; border-bottom:1px dotted var(--muted); width:fit-content; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .summary-sessions { font-family: var(--mono); font-size:13.5px; color: var(--muted); text-align:right; white-space:nowrap; }
+  .summary-amount { font-family: var(--mono); font-weight:700; font-size:13.5px; text-align:right; }
 
   .toast {
     position:fixed; left:50%; bottom:96px; transform:translateX(-50%);
@@ -305,14 +318,17 @@
       <div class="summary-title">Total Summary</div>
       <div id="totalSummary"></div>
     </div>
+    <div class="year-total-band">
+      <select id="yearSelect" class="year-select" aria-label="Period"></select>
+      <span class="year-total-label">total</span>
+      <span class="year-total-value" id="yearTotalValue">$0.00</span>
+    </div>
   </main>
 
   <main id="view-members" style="display:none;">
     <div id="memberList"></div>
     <div class="add-row" id="btnAddMember">＋ Add Member</div>
   </main>
-
-  <button class="fab" id="fabAdd">＋</button>
 </div>
 
 <input type="file" id="fileInput" accept=".json,application/json,text/plain,*/*" />
@@ -699,7 +715,6 @@
       $$(".tab").forEach(function(el){ el.classList.toggle("active", el===tab); });
       $("#view-calendar").style.display = t === "calendar" ? "" : "none";
       $("#view-members").style.display = t === "members" ? "" : "none";
-      $("#fabAdd").style.display = t === "calendar" ? "flex" : "none";
     });
   });
 
@@ -771,7 +786,46 @@
     });
 
     renderSummary();
+    renderYearTotal();
   }
+
+  // ---------- year / all-time grand total band ----------
+  // selectedPeriod: "all" or a 4-digit year string. Persisted across re-renders.
+  var selectedPeriod = "all";
+
+  // distinct years that actually have entries, newest first (empty years omitted)
+  function yearsWithData(){
+    var set = {};
+    state.entries.forEach(function(e){ set[parseISO(e.date).getFullYear()] = true; });
+    return Object.keys(set).map(Number).sort(function(a,b){ return b-a; });
+  }
+
+  // sum of every participant's amount across entries in the selected period
+  function periodTotal(period){
+    return state.entries.reduce(function(sum, e){
+      if (period !== "all" && String(parseISO(e.date).getFullYear()) !== period) return sum;
+      return sum + entryTotal(e);
+    }, 0);
+  }
+
+  function renderYearTotal(){
+    var years = yearsWithData();
+    var sel = $("#yearSelect");
+    // if the previously-selected year no longer has data, fall back to All time
+    if (selectedPeriod !== "all" && years.indexOf(Number(selectedPeriod)) === -1) {
+      selectedPeriod = "all";
+    }
+    var opts = ['<option value="all">All time</option>']
+      .concat(years.map(function(y){ return '<option value="'+y+'">'+y+'</option>'; }));
+    sel.innerHTML = opts.join("");
+    sel.value = selectedPeriod;
+    $("#yearTotalValue").textContent = "$" + fmtMoney(periodTotal(selectedPeriod));
+  }
+
+  $("#yearSelect").addEventListener("change", function(){
+    selectedPeriod = this.value;
+    $("#yearTotalValue").textContent = "$" + fmtMoney(periodTotal(selectedPeriod));
+  });
 
   $("#prevMonth").addEventListener("click", function(){
     calMonth -= 1;
@@ -813,34 +867,13 @@
       var name = mem ? mem.name : "(deleted member)";
       var color = mem ? mem.color : "#9C9484";
       var t = totals[id];
-      var allPaid = t.paidCount === t.sessions;
       return '<div class="summary-row">'
         + '<span class="swatch" style="background:'+color+'"></span>'
         + '<span class="summary-name" data-id="'+id+'">'+escapeHtml(name)+'</span>'
         + '<span class="summary-sessions">No.'+t.sessions+'</span>'
         + '<span class="summary-amount">$'+fmtMoney(t.amount)+'</span>'
-        + '<span class="paid-toggle'+(allPaid?' paid':'')+' summary-paid-toggle" data-id="'+id+'" style="font-size:11px; padding:5px 9px; border-radius:99px; cursor:pointer; border:1px solid var(--rule); font-family:var(--mono); white-space:nowrap;'+(allPaid?'background:var(--good); color:#fff; border-color:var(--good);':'')+'">'+(allPaid?'Paid':'Unpaid')+'</span>'
         + '</div>';
     }).join("");
-
-    $$("#totalSummary .summary-paid-toggle").forEach(function(btn){
-      btn.addEventListener("click", function(){
-        var id = btn.getAttribute("data-id");
-        var totalsNow = computeSummary();
-        var allPaidNow = totalsNow[id] && totalsNow[id].paidCount === totalsNow[id].sessions;
-        var newPaid = !allPaidNow;
-        state.entries.forEach(function(e){
-          e.participants.forEach(function(p){
-            if (p.memberId === id) p.paid = newPaid;
-          });
-        });
-        saveState();
-        renderCalendar();
-        if (elSheetDay.classList.contains("show") && selectedDayISO) {
-          openDaySheet(selectedDayISO);
-        }
-      });
-    });
 
     $$("#totalSummary .summary-name").forEach(function(el){
       el.addEventListener("click", function(){
@@ -949,9 +982,6 @@
   $("#dayAddEntryBtn").addEventListener("click", function(){
     closeSheets();
     openEntrySheet(null, selectedDayISO);
-  });
-  $("#fabAdd").addEventListener("click", function(){
-    openEntrySheet(null, selectedDayISO || todayISO());
   });
 
   // ---------- day screenshot (native Canvas render, no external libs) ----------

@@ -43,7 +43,14 @@
     padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
   }
   .topbar-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .brand { font-family: var(--serif); font-size:19px; font-weight:700; flex-shrink:0; }
+  .brand { font-family: var(--serif); font-size:19px; font-weight:700; flex-shrink:0; cursor:text; border-radius:5px; padding:1px 4px; margin-left:-4px; }
+  .brand:hover { background: var(--paper-deep); }
+  /* inline rename field — looks like the heading, editable */
+  .brand-input {
+    font-family: var(--serif); font-size:19px; font-weight:700; color: var(--ink);
+    background: var(--paper-deep); border:1px solid var(--rule); border-radius:5px;
+    padding:1px 4px; margin-left:-4px; max-width:220px; outline:none;
+  }
   .icon-row { display:flex; gap:6px; }
   .icon-btn-wide {
     height:30px; padding:0 10px; border-radius:99px; border:1px solid var(--rule);
@@ -225,7 +232,7 @@
     display:grid; grid-template-columns: 16px 1fr 56px 84px; align-items:center;
     column-gap:10px; padding:9px 2px; border-bottom:1px dashed var(--rule);
   }
-  .summary-name { font-size:13.5px; cursor:pointer; border-bottom:1px dotted var(--muted); width:fit-content; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .summary-name { font-size:13.5px; cursor:pointer; width:fit-content; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .summary-sessions { font-family: var(--mono); font-size:13.5px; color: var(--muted); text-align:right; white-space:nowrap; }
   .summary-amount { font-family: var(--mono); font-weight:700; font-size:13.5px; text-align:right; }
 
@@ -294,7 +301,7 @@
 <div class="app">
   <header class="topbar">
     <div class="topbar-row">
-      <div class="brand">Session Ledger</div>
+      <div class="brand" id="brandTitle" title="Tap to rename">Session Ledger</div>
       <div class="icon-row">
         <button class="icon-btn-wide" id="btnDownload" aria-label="Backup">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
@@ -1601,9 +1608,54 @@
     if (!storageAvailable) {
       $("#storageWarning").style.display = "block";
     }
+    applyTitle();
     renderCalendar();
     renderMembers();
   }
+
+  // ---------- editable app title (stored in state, included in backups) ----------
+  var DEFAULT_TITLE = "Session Ledger";
+  function currentTitle(){
+    return (state.title && String(state.title).trim()) ? String(state.title).trim() : DEFAULT_TITLE;
+  }
+  function applyTitle(){
+    var t = currentTitle();
+    $("#brandTitle").textContent = t;
+    document.title = t;
+  }
+
+  // tap the heading → swap to an inline text field; Enter / blur saves, Esc cancels
+  $("#brandTitle").addEventListener("click", function(){
+    var brand = $("#brandTitle");
+    if (brand.style.display === "none") return; // already editing
+    var input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 24;
+    input.className = "brand-input";
+    input.value = currentTitle();
+    brand.style.display = "none";
+    brand.parentNode.insertBefore(input, brand);
+    input.focus();
+    input.select();
+
+    var done = false;
+    function finish(save){
+      if (done) return; done = true;
+      if (save) {
+        var v = input.value.trim();
+        state.title = v || DEFAULT_TITLE; // empty → reset to default
+        saveState();
+        applyTitle();
+      }
+      if (input.parentNode) input.parentNode.removeChild(input);
+      brand.style.display = "";
+    }
+    input.addEventListener("keydown", function(e){
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", function(){ finish(true); });
+  });
 
   function unlockUI(){
     lockEl.style.display = "none";
